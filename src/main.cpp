@@ -17,9 +17,6 @@
 #define TIMER_STOP_THRESHOLD 0.1
 #define TIMER_HYST_CYCLES 4  // threshold has to be exceeded for this many loop cycles
 #define DEBOUNCE_DELAY 25
-//#define ATMEGA_TCNT 57723 // 0xffff - 7812 (1 second at 8MHz with 1024 prescaler)
-//#define ATMEGA_TCNT 57645 // 0xffff - 7890 (1 second at 8MHz with 1024 prescaler)
-#define ATMEGA_TCNT 58535 // 0xffff - 4000 (1 second at 8MHz with 1024 prescaler)
 
 #define CALIBRATION_FACTOR 206  // remove/comment out to start calibration
 #define AVG_SAMPLES 3  // 8 is more stable but measurements take longer
@@ -296,19 +293,5 @@ void loop() {
 
     //Serial.println(v, 3);
     display->update(v);
-
-
-    // Go to sleep, wake up every 32 ms
-    /*MCUSR = 0;
-    WDTCSR = (1 << WDCE) | (1 << WDE);
-    WDTCSR = (1 << WDIE) | (1 << WDP0); // 32 ms
-    wdt_reset();
-
-    set_sleep_mode(SLEEP_MODE_PWR_DOWN);
-    noInterrupts();
-    sleep_enable();
-    interrupts();
-    sleep_cpu();
-    sleep_disable();*/
 }
 
