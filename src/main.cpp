@@ -6,6 +6,7 @@
 #include <Adafruit_SSD1306.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <PubSubClient.h>
 
 #include <ESP8266WiFi.h>
 
@@ -28,6 +29,16 @@ HX711 scale;
 
 OneWire onewire(PIN_DS18B20);
 DallasTemperature ds18b20(&onewire);
+
+const char* mqtt_user = "pi";
+const char* mqtt_password = "00624583";
+#define TOPIC_IOT_STATUS "iot/kitchen-scale"
+#define TOPIC "home/kitchen-scale/temperature"
+
+void mqtt_cb(char* topic, byte* payload, unsigned int length) {}
+
+WiFiClient client;
+PubSubClient mqtt_client(client);
 
 volatile unsigned long timer_count = 0;
 bool timer_running = false;
@@ -132,6 +143,19 @@ void Display::update(double v) {
 
 Display *display;
 
+void publish_mqtt_status(unsigned int ds18b20_reading) {
+  char buf[64], buf_ip[16];
+  unsigned long ip_int = (unsigned long)WiFi.localIP();
+  sprintf(buf_ip, "%lu.%lu.%lu.%lu", (ip_int & 0xf000) >> 24, (ip_int & 0xf00) >> 16, (ip_int & 0xf0) >> 8, (ip_int & 0xf));
+  sprintf(buf, "{ \"running\": 1, \"ip\": %s, \"signal\": %d }", buf_ip, WiFi.RSSI());
+  
+#ifdef TOPIC_IOT_STATUS
+  mqtt_client.publish(TOPIC_IOT_STATUS, buf);
+#endif
+  sprintf(buf, "%d", ds18b20_reading);
+  mqtt_client.publish(TOPIC, buf);
+}
+
 #if 0
 void calibration() {
     menu_display->clear();
@@ -207,11 +231,20 @@ void setup() {
 
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
 
-    // Power save settings
-    // ... TODO
+    WiFi.begin(ssid, password);
+    
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+    }
 
-    WiFi.mode(WIFI_OFF);
-    WiFi.forceSleepBegin();
+    Serial.println("WiFi connected");
+
+    byte retry = 0;
+    int r;
+    mqtt_client.setCallback(mqtt_cb);
+    while (!(r = mqtt_client.connect("car-battery", mqtt_user, mqtt_password)) && retry++ < 2);
+
+    Serial.println("MQTT connected");
 
     display = new Display;
     display->clear();
@@ -263,13 +296,23 @@ void setup() {
     Serial.print(ds18b20.getDeviceCount(), DEC);
     Serial.print(" - temperature: ");
     ds18b20.requestTemperatures();
-    delay(10);
+    delay(1);
     Serial.println(ds18b20.getTempCByIndex(0));
 }
 
 void loop() {
     static double last_v = 0, v = 0;
     static double last_delta = 0;
+    static int ds18b20_reading = -255;
+
+    if (ds18b20.getDeviceCount() > 0) { // found a temperature sensor
+        ds18b20.requestTemperatures();
+        delay(1);
+        ds18b20_reading = (int)ds18b20.getTempCByIndex(0);
+        if (ds18b20_reading != -255) {
+            publish_mqtt_status(ds18b20_reading);
+        }
+    }
 
     v = scale.get_units(AVG_SAMPLES) / 10.0;
     //if (v < 0) v = 0;
