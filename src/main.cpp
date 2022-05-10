@@ -2,13 +2,14 @@
 #include "HX711.h"
 #include <Wire.h>
 
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <PubSubClient.h>
 
 #include <ESP8266WiFi.h>
+
+#include "definitions.h"
+#include "display.h"
 
 #define PIN_I2C_SDA 4
 #define PIN_I2C_SCL 5
@@ -22,6 +23,9 @@
 #define TIMER_STOP_THRESHOLD 0.1
 #define TIMER_HYST_CYCLES 4  // threshold has to be exceeded for this many loop cycles
 #define DEBOUNCE_DELAY 25
+
+enum timer_mode_t timer_mode;
+enum units_mode_t units_mode;
 
 #define CALIBRATION_FACTOR 206  // remove/comment out to start calibration
 #define AVG_SAMPLES 3  // 8 is more stable but measurements take longer
@@ -46,100 +50,6 @@ bool timer_has_run = false;
 int debug_display = 0;
 volatile int isr1_counter = 0, isr2_counter = 0;
 unsigned int delta_below_threshold = 0;
-
-enum {
-    TIMER_AUTO = 0,
-    TIMER_MANUAL
-} timer_mode;
-
-enum {
-    UNITS_METRIC = 0,
-    UNITS_IMPERIAL
-} units_mode;
-
-class Display {
-public:
-    Display();
-    void display_message(const char *m, uint8_t line);
-    void display_message(unsigned long v, uint8_t line);
-    void display_message(long v, uint8_t line);
-    void display_message(double v, uint8_t line);
-    void update(double v);
-    void clear();
-
-protected:
-    Adafruit_SSD1306 *display;
-    char buf[16];
-};
-
-Display::Display() {
-    display = new Adafruit_SSD1306(128, 32, &Wire, -1);
-    Serial.println("SSD1306 created");
-
-    display->begin(SSD1306_SWITCHCAPVCC, 0x3C);
-    display->setRotation(2);
-    Serial.println("SSD1306 initialised");
-    /*if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-        Serial.println("Failed to communicate with display at 0x3C");
-        while (1) {}
-    }*/
-
-    display->clearDisplay();
-    display->setTextSize(1);
-    display->setTextColor(WHITE);
-    display->setCursor(0, 0);
-    display->display();
-    Serial.println("Cleared display");
-}
-
-void Display::display_message(const char *m, uint8_t line) {
-    //display->clearDisplay();
-    display->setCursor(0, line * 18);
-    display->write(m);
-    display->display();
-}
-
-void Display::display_message(unsigned long v, uint8_t line) {
-    sprintf(buf, "%lu", v);
-    display_message(buf, line);
-}
-
-void Display::display_message(long v, uint8_t line) {
-    sprintf(buf, "%ld", v);
-    display_message(buf, line);
-}
-
-void Display::display_message(double v, uint8_t line) {
-    dtostrf(v, 6, 1, buf);
-    display_message(buf, line);
-}
-
-void Display::clear() {
-    display->clearDisplay();
-}
-
-void Display::update(double v) {
-    display->setTextSize(2);
-    clear();
-    display->setCursor(0, 0);
-
-    // Weight (convert to imperial if required)
-    if (units_mode == UNITS_IMPERIAL)
-        v *= 0.03527396;
-
-    dtostrf(v, 6, 1, buf);
-    display->print(buf);
-
-    if (units_mode == UNITS_IMPERIAL)
-        display->print("oz");
-
-    // Timer
-    display->setCursor(2, 18);
-    display->setTextSize(2);
-    sprintf(buf, "%s %02u:%02u %u", timer_running ? ">" : " ", (unsigned int)(timer_count / 60.0), (unsigned int)(timer_count % 60), delta_below_threshold);
-    display->print(buf);
-    display->display();
-}
 
 Display *display;
 
@@ -252,7 +162,7 @@ void setup() {
 
     Serial.println("Display ready");
 
-    //pinMode(PIN_BTN_RESET, INPUT_PULLUP);
+    pinMode(PIN_BTN_RESET, INPUT_PULLUP);
     //pinMode(PIN_BTN_FUNCTION, INPUT_PULLUP);
 
     //attachInterrupt(digitalPinToInterrupt(PIN_BTN_RESET), isr_btn_reset, CHANGE);
@@ -304,16 +214,33 @@ void loop() {
     static double last_v = 0, v = 0;
     static double last_delta = 0;
     static int ds18b20_reading = -255;
+    static unsigned long last_temperature_reading = 0;
 
+    const unsigned long m = millis();
+
+    // Buttons
+    if (digitalRead(PIN_BTN_RESET) == LOW) {
+        scale.tare();
+        timer_mode = TIMER_AUTO;
+        timer_count = 0;
+        timer_running = false;
+        timer_has_run = false;
+    }
+
+    // Get temperature
     if (ds18b20.getDeviceCount() > 0) { // found a temperature sensor
-        ds18b20.requestTemperatures();
-        delay(1);
-        ds18b20_reading = (int)ds18b20.getTempCByIndex(0);
-        if (ds18b20_reading != -255) {
-            publish_mqtt_status(ds18b20_reading);
+        if ((m - last_temperature_reading) > 10000) {
+            ds18b20.requestTemperatures();
+            delay(1);
+            ds18b20_reading = (int)ds18b20.getTempCByIndex(0);
+            if (ds18b20_reading != -255) {
+                publish_mqtt_status(ds18b20_reading);
+            }
+            last_temperature_reading = m;
         }
     }
 
+    // Get scale
     v = scale.get_units(AVG_SAMPLES) / 10.0;
     //if (v < 0) v = 0;
     if (v < 0.0 && v > -0.2) v = 0;
@@ -349,6 +276,7 @@ void loop() {
     last_v = v;
     last_delta = delta;
 
+    // Debug output and display updates
     //Serial.println(v, 3);
     display->update(v);
 }
