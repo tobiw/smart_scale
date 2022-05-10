@@ -4,14 +4,18 @@
 
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
 
 #include <ESP8266WiFi.h>
 
 #define PIN_I2C_SDA 4
 #define PIN_I2C_SCL 5
 
-#define PIN_BTN_RESET 2
-#define PIN_BTN_FUNCTION 3
+#define PIN_BTN_RESET 12
+#define PIN_BTN_FUNCTION 13
+
+#define PIN_DS18B20 13
 
 #define TIMER_START_THRESHOLD 0.5
 #define TIMER_STOP_THRESHOLD 0.1
@@ -21,6 +25,9 @@
 #define CALIBRATION_FACTOR 206  // remove/comment out to start calibration
 #define AVG_SAMPLES 3  // 8 is more stable but measurements take longer
 HX711 scale;
+
+OneWire onewire(PIN_DS18B20);
+DallasTemperature ds18b20(&onewire);
 
 volatile unsigned long timer_count = 0;
 bool timer_running = false;
@@ -212,8 +219,8 @@ void setup() {
 
     Serial.println("Display ready");
 
-    pinMode(PIN_BTN_RESET, INPUT_PULLUP);
-    pinMode(PIN_BTN_FUNCTION, INPUT_PULLUP);
+    //pinMode(PIN_BTN_RESET, INPUT_PULLUP);
+    //pinMode(PIN_BTN_FUNCTION, INPUT_PULLUP);
 
     //attachInterrupt(digitalPinToInterrupt(PIN_BTN_RESET), isr_btn_reset, CHANGE);
     //attachInterrupt(digitalPinToInterrupt(PIN_BTN_FUNCTION), isr_btn_function, CHANGE);
@@ -250,6 +257,14 @@ void setup() {
     //timer1_attachInterrupt(isr_timer);
     //timer1_enable(TIM_DIV256, TIM_EDGE, TIM_LOOP); // 312,500Hz ticks
     //timer1_write(31250); // 0.1s
+
+    ds18b20.begin();
+    Serial.print("Found DS18B20: ");
+    Serial.print(ds18b20.getDeviceCount(), DEC);
+    Serial.print(" - temperature: ");
+    ds18b20.requestTemperatures();
+    delay(10);
+    Serial.println(ds18b20.getTempCByIndex(0));
 }
 
 void loop() {
