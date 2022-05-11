@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include "HX711.h"
 #include <Wire.h>
 
 #include <OneWire.h>
@@ -10,6 +9,7 @@
 
 #include "definitions.h"
 #include "display.h"
+#include "scale.h"
 
 #define PIN_I2C_SDA 4
 #define PIN_I2C_SCL 5
@@ -27,9 +27,7 @@
 enum timer_mode_t timer_mode;
 enum units_mode_t units_mode;
 
-#define CALIBRATION_FACTOR 206  // remove/comment out to start calibration
-#define AVG_SAMPLES 3  // 8 is more stable but measurements take longer
-HX711 scale;
+Scale scale;
 
 OneWire onewire(PIN_DS18B20);
 DallasTemperature ds18b20(&onewire);
@@ -67,31 +65,6 @@ void publish_mqtt_status(unsigned int ds18b20_reading) {
   mqtt_client.publish(TOPIC, buf);
 }
 
-#if 0
-void calibration() {
-    menu_display->clear();
-    menu_display->display_message("Clear scale", 0);
-    delay(2000);
-    scale.set_scale();
-    scale.tare();
-    Serial.println("Scale tared.");
-    Serial.println("Place known weight onto scale!");
-    menu_display->clear();
-    menu_display->display_message("Place weight", 0);
-    delay(2000);
-    unsigned long known_value = scale.get_units(10);
-    Serial.print("Known weight raw value is ");
-    Serial.println(known_value);
-    Serial.print("For 12g the SCALE value is ");
-    const unsigned long sc = (unsigned long)(known_value / 120.0);
-    Serial.println(sc);
-    menu_display->clear();
-    menu_display->display_message(sc, 0);
-    scale.set_scale(sc);
-    //scale.set_offset(0);
-    delay(1000);
-}
-#endif
 
 volatile unsigned long isr_btn_function_last_m = 0;
 
@@ -154,29 +127,14 @@ void setup() {
     //attachInterrupt(digitalPinToInterrupt(PIN_BTN_RESET), isr_btn_reset, CHANGE);
     //attachInterrupt(digitalPinToInterrupt(PIN_BTN_FUNCTION), isr_btn_function, CHANGE);
 
-    scale.begin(12, 14); // DAT, CLK
-
-    Serial.println("Scale started");
-
-    delay(10);
-    int scale_retries = 0;
-    while (!scale.is_ready()) {
+    if (scale.begin(12, 14) < 0) { // DAT, CLK
         Serial.println("Failed to init scale.");
-        delay(100);
         display->clear();
-        scale_retries++;
-        if (scale_retries > 8) {
-            display->display_message("SCALE ERROR", 0);
-            while(1) {}
-        }
+        display->display_message("SCALE ERROR", 0);
+        while(1) {}
     }
 
-#ifndef CALIBRATION_FACTOR
-    calibration();
-#else
-    scale.set_scale(CALIBRATION_FACTOR);
-#endif
-
+    Serial.println("Scale started");
     delay(1000);
     Serial.println("Taring scale ready for measurements");
     scale.tare();
@@ -254,7 +212,7 @@ void loop() {
     }
 
     // Get scale
-    v = scale.get_units(AVG_SAMPLES) / 10.0;
+    v = scale.get() / 10.0;
     //if (v < 0) v = 0;
     if (v < 0.0 && v > -0.2) v = 0;
     if (v > 1000) v = 9999;
