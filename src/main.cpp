@@ -50,6 +50,7 @@ bool timer_has_run = false;
 int debug_display = 0;
 volatile int isr1_counter = 0, isr2_counter = 0;
 unsigned int delta_below_threshold = 0;
+bool use_temperature_sensor = false;
 
 Display *display;
 
@@ -58,7 +59,7 @@ void publish_mqtt_status(unsigned int ds18b20_reading) {
   unsigned long ip_int = (unsigned long)WiFi.localIP();
   sprintf(buf_ip, "%lu.%lu.%lu.%lu", (ip_int & 0xf000) >> 24, (ip_int & 0xf00) >> 16, (ip_int & 0xf0) >> 8, (ip_int & 0xf));
   sprintf(buf, "{ \"running\": 1, \"ip\": %s, \"signal\": %d }", buf_ip, WiFi.RSSI());
-  
+
 #ifdef TOPIC_IOT_STATUS
   mqtt_client.publish(TOPIC_IOT_STATUS, buf);
 #endif
@@ -141,21 +142,6 @@ void setup() {
 
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
 
-    WiFi.begin(ssid, password);
-    
-    while (WiFi.status() != WL_CONNECTED) {
-      delay(500);
-    }
-
-    Serial.println("WiFi connected");
-
-    byte retry = 0;
-    int r;
-    mqtt_client.setCallback(mqtt_cb);
-    while (!(r = mqtt_client.connect("car-battery", mqtt_user, mqtt_password)) && retry++ < 2);
-
-    Serial.println("MQTT connected");
-
     display = new Display;
     display->clear();
     display->display_message("Starting ...", 0);
@@ -202,12 +188,39 @@ void setup() {
     //timer1_write(31250); // 0.1s
 
     ds18b20.begin();
+    use_temperature_sensor = ds18b20.getDeviceCount() > 0;
     Serial.print("Found DS18B20: ");
-    Serial.print(ds18b20.getDeviceCount(), DEC);
+    Serial.print(use_temperature_sensor, DEC);
     Serial.print(" - temperature: ");
     ds18b20.requestTemperatures();
     delay(1);
     Serial.println(ds18b20.getTempCByIndex(0));
+
+    // Only connect to WiFi if the temperature probe is plugged in
+    // (scale-only mode doesn't need to be accessible remotely)
+    if (use_temperature_sensor) {
+        display->clear();
+        display->display_message("Connecting WiFi ...", 0);
+
+        WiFi.begin(ssid, password);
+
+        while (WiFi.status() != WL_CONNECTED) {
+          delay(500);
+        }
+
+        Serial.println("WiFi connected");
+
+        byte retry = 0;
+        int r;
+        mqtt_client.setCallback(mqtt_cb);
+        while (!(r = mqtt_client.connect("car-battery", mqtt_user, mqtt_password)) && retry++ < 2);
+        Serial.println("MQTT connected");
+        display->display_message("MQTT connected", 1);
+        delay(500);
+    } else {
+        WiFi.mode(WIFI_OFF);
+        WiFi.forceSleepBegin();
+    }
 }
 
 void loop() {
