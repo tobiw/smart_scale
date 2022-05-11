@@ -249,6 +249,6 @@ void loop() {
 
     // Debug output and display updates
     //Serial.println(v, 3);
-    display->update(v);
+    display->update(v, ds18b20_reading);
 }
 

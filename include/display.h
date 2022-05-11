@@ -11,7 +11,7 @@ public:
     void display_message(unsigned long v, uint8_t line);
     void display_message(long v, uint8_t line);
     void display_message(double v, uint8_t line);
-    void update(double v);
+    void update(double scale_value, int temperature_reading);
     void clear();
 
 protected:

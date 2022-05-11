@@ -53,25 +53,34 @@ void Display::clear() {
     display->clearDisplay();
 }
 
-void Display::update(double v) {
+void Display::update(double scale_value, int temperature_reading) {
     display->setTextSize(2);
     clear();
     display->setCursor(0, 0);
 
     // Weight (convert to imperial if required)
     if (units_mode == UNITS_IMPERIAL)
-        v *= 0.03527396;
+        scale_value *= 0.03527396;
 
-    dtostrf(v, 6, 1, buf);
+    dtostrf(scale_value, 6, 1, buf);
     display->print(buf);
 
     if (units_mode == UNITS_IMPERIAL)
         display->print("oz");
 
+    // Temperature
+    if (temperature_reading != -255) {
+        display->setCursor(2, 18);
+        display->setTextSize(2);
+        display->print(temperature_reading);
+        display->print("C");
+    }
+
     // Timer
-    display->setCursor(2, 18);
+    /*display->setCursor(2, 18);
     display->setTextSize(2);
     sprintf(buf, "%s %02u:%02u %u", timer_running ? ">" : " ", (unsigned int)(timer_count / 60.0), (unsigned int)(timer_count % 60), delta_below_threshold);
-    display->print(buf);
+    display->print(buf);*/
+
     display->display();
 }
