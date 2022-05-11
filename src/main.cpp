@@ -24,6 +24,8 @@
 #define TIMER_HYST_CYCLES 4  // threshold has to be exceeded for this many loop cycles
 #define DEBOUNCE_DELAY 25
 
+#define WIFI_SLEEP
+
 enum timer_mode_t timer_mode;
 enum units_mode_t units_mode;
 
@@ -36,8 +38,6 @@ const char* mqtt_user = "pi";
 const char* mqtt_password = "00624583";
 #define TOPIC_IOT_STATUS "iot/kitchen-scale"
 #define TOPIC "home/kitchen-scale/temperature"
-
-void mqtt_cb(char* topic, byte* payload, unsigned int length) {}
 
 WiFiClient client;
 PubSubClient mqtt_client(client);
@@ -53,18 +53,38 @@ bool use_temperature_sensor = false;
 Display *display;
 
 void publish_mqtt_status(unsigned int ds18b20_reading) {
-  char buf[64], buf_ip[16];
+  char buf[64];
+  /*char buf_ip[16];
   unsigned long ip_int = (unsigned long)WiFi.localIP();
   sprintf(buf_ip, "%lu.%lu.%lu.%lu", (ip_int & 0xf000) >> 24, (ip_int & 0xf00) >> 16, (ip_int & 0xf0) >> 8, (ip_int & 0xf));
-  sprintf(buf, "{ \"running\": 1, \"ip\": %s, \"signal\": %d }", buf_ip, WiFi.RSSI());
+  sprintf(buf, "{ \"running\": 1, \"ip\": %s, \"signal\": %d }", buf_ip, WiFi.RSSI());*/
 
-#ifdef TOPIC_IOT_STATUS
-  mqtt_client.publish(TOPIC_IOT_STATUS, buf);
-#endif
   sprintf(buf, "%d", ds18b20_reading);
   mqtt_client.publish(TOPIC, buf);
 }
 
+void connect_wifi_mqtt() {
+    WiFi.begin(ssid, password);
+
+    while (WiFi.status() != WL_CONNECTED) {
+        Serial.print(".");
+        delay(500);
+    }
+
+    Serial.println("WiFi connected");
+
+        if (!mqtt_client.connected()) {
+        byte retry = 0;
+        int r;
+        while (!(r = mqtt_client.connect("kitchen-scale", mqtt_user, mqtt_password, TOPIC_IOT_STATUS "/state", 1, false, "offline")) && retry++ < 2);
+
+#ifdef TOPIC_IOT_STATUS
+        mqtt_client.publish(TOPIC_IOT_STATUS "/state", "online");
+#endif
+    }
+
+    Serial.println("MQTT connected");
+}
 
 volatile unsigned long isr_btn_function_last_m = 0;
 
@@ -160,21 +180,11 @@ void setup() {
         display->clear();
         display->display_message("Connecting WiFi ...", 0);
 
-        WiFi.begin(ssid, password);
+        connect_wifi_mqtt();
 
-        while (WiFi.status() != WL_CONNECTED) {
-          delay(500);
-        }
-
-        Serial.println("WiFi connected");
-
-        byte retry = 0;
-        int r;
-        mqtt_client.setCallback(mqtt_cb);
-        while (!(r = mqtt_client.connect("car-battery", mqtt_user, mqtt_password)) && retry++ < 2);
-        Serial.println("MQTT connected");
         display->display_message("MQTT connected", 1);
-        delay(500);
+        publish_mqtt_status(ds18b20.getTempCByIndex(0));
+        delay(100);
     } else {
         WiFi.mode(WIFI_OFF);
         WiFi.forceSleepBegin();
@@ -184,10 +194,13 @@ void setup() {
 void loop() {
     static double last_v = 0, v = 0;
     static double last_delta = 0;
-    static int ds18b20_reading = -255;
     static unsigned long last_temperature_reading = 0;
+    static unsigned long last_temperature_publish = 0;
+    static int ds18b20_reading = -255;
 
     const unsigned long m = millis();
+
+    if (mqtt_client.connected()) mqtt_client.loop();
 
     // Buttons
     if (digitalRead(PIN_BTN_RESET) == LOW) {
@@ -199,14 +212,44 @@ void loop() {
     }
 
     // Get temperature
-    if (ds18b20.getDeviceCount() > 0) { // found a temperature sensor
-        if ((m - last_temperature_reading) > 10000) {
+    if (use_temperature_sensor) {
+        if ((m - last_temperature_reading) > 2000) {
+            // Get temperature
             ds18b20.requestTemperatures();
             delay(1);
             ds18b20_reading = (int)ds18b20.getTempCByIndex(0);
-            if (ds18b20_reading != -255) {
-                publish_mqtt_status(ds18b20_reading);
+
+            if ((m - last_temperature_publish) > 20000) {
+                Serial.println("Waking up modem, reconnecting, sending temperature ...");
+
+                // Reconnect WiFI and MQTT
+#ifdef WIFI_SLEEP
+                Serial.println("Turning WiFi ON");
+                WiFi.forceSleepWake();
+                delay(100);
+                WiFi.mode(WIFI_STA);
+#endif
+                connect_wifi_mqtt();
+
+                if (ds18b20_reading != -255) {
+                    publish_mqtt_status(ds18b20_reading);
+                    delay(100);
+                }
+
+                // Process MQTT
+                mqtt_client.loop();
+                delay(100);
+
+#ifdef WIFI_SLEEP
+                // Disconnect WiFi and sleep modem
+                Serial.println("Turning WiFi OFF");
+                WiFi.mode(WIFI_OFF);
+                WiFi.forceSleepBegin();
+#endif
+
+                last_temperature_publish = m;
             }
+
             last_temperature_reading = m;
         }
     }
@@ -219,8 +262,8 @@ void loop() {
 
     double delta = v - last_v;
     //if (delta < 0) delta *= -1.0;
-    Serial.print("delta: ");
-    Serial.println(delta);
+    /*Serial.print("delta: ");
+    Serial.println(delta);*/
 
     // Start timer if weight registered (only once after reset)
     if (timer_mode == TIMER_AUTO) {
