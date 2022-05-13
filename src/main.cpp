@@ -6,6 +6,8 @@
 #include <PubSubClient.h>
 
 #include <ESP8266WiFi.h>
+#include <FS.h>
+#include <ArduinoJson.h>
 
 #include "definitions.h"
 #include "display.h"
@@ -49,8 +51,51 @@ int debug_display = 0;
 volatile int isr1_counter = 0, isr2_counter = 0;
 unsigned int delta_below_threshold = 0;
 bool use_temperature_sensor = false;
+char wifi_ssid[128];
+char wifi_password[128];
 
 Display *display;
+
+void load_config() {
+    if (!SPIFFS.begin()) {
+        Serial.println("Failed to mount SPIFFS");
+        return;
+    }
+
+    if (SPIFFS.exists("/wifi.cfg")) {
+        Serial.println("File /wifi.cfg found");
+    } else {
+        Serial.println("file not found");
+    }
+
+    File cfg = SPIFFS.open("/wifi.cfg", "r");
+    if (!cfg) {
+        Serial.println("Failed to load wifi.cfg");
+        return;
+    }
+
+    Serial.println("/wifi.cfg opened successfully");
+
+    const size_t size = cfg.size();
+    std::unique_ptr<char[]> buf(new char[size]);
+    cfg.readBytes(buf.get(), size);
+
+    cfg.close();
+
+    StaticJsonDocument<200> doc;
+    DeserializationError err = deserializeJson(doc, buf.get());
+
+    if (err) {
+        Serial.print("Failed to parse JSON: ");
+        Serial.println(err.f_str());
+        return;
+    }
+
+    strcpy(wifi_ssid, doc["ssid"]);
+    strcpy(wifi_password, doc["key"]);
+
+    Serial.println("Config loaded successfully.");
+}
 
 void publish_mqtt_status(unsigned int ds18b20_reading) {
   char buf[64];
@@ -64,7 +109,7 @@ void publish_mqtt_status(unsigned int ds18b20_reading) {
 }
 
 void connect_wifi_mqtt() {
-    WiFi.begin(ssid, password);
+    WiFi.begin(wifi_ssid, wifi_password);
 
     while (WiFi.status() != WL_CONNECTED) {
         Serial.print(".");
@@ -140,6 +185,8 @@ void setup() {
     display->display_message("Starting ...", 0);
 
     Serial.println("Display ready");
+
+    load_config();
 
     pinMode(PIN_BTN_RESET, INPUT_PULLUP);
     //pinMode(PIN_BTN_FUNCTION, INPUT_PULLUP);
